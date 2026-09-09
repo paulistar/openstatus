@@ -41,11 +41,47 @@ export const WorkOSProvider = WorkOS({
   allowDangerousEmailAccountLinking: true,
 });
 
+/**
+ * Mart Studios / PauliStar fork: self-host magic links must actually send via
+ * Resend (upstream forces apiKey:undefined + stdout-only for local/dev).
+ * EMAIL_FROM defaults to verified Mart domain; stdout log kept as ops fallback.
+ */
 export const ResendProvider = Resend({
-  apiKey: undefined, // REMINDER: keep undefined to avoid sending emails
+  apiKey: process.env.RESEND_API_KEY,
+  from:
+    process.env.EMAIL_FROM ??
+    "OpenStatus <noreply@martstudiosbr.com>",
   async sendVerificationRequest(params) {
+    const { identifier, provider, url } = params;
+    const { host } = new URL(url);
+
     console.log("");
-    console.log(`>>> Magic Link: ${params.url}`);
+    console.log(`>>> Magic Link: ${url}`);
     console.log("");
+
+    if (!provider.apiKey) {
+      throw new Error(
+        "RESEND_API_KEY is required to send OpenStatus magic-link emails",
+      );
+    }
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${provider.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: provider.from,
+        to: identifier,
+        subject: `Sign in to ${host}`,
+        html: `<body style="background:#f9f9f9;font-family:sans-serif"><table width="100%" border="0" cellspacing="20" cellpadding="0" style="max-width:600px;margin:auto;background:#fff"><tr><td align="center" style="padding:10px 0px"><strong style="font-size:22px">Sign in to ${host}</strong></td></tr><tr><td align="center"><table border="0" cellspacing="0" cellpadding="0"><tr><td align="center" style="border-radius:5px" bgcolor="#346df1"><a href="${url}" target="_blank" style="font-size:18px;color:#fff;text-decoration:none;border-radius:5px;padding:10px 20px;border:1px solid #346df1;display:inline-block;font-weight:bold">Sign in</a></td></tr></table></td></tr><tr><td align="center" style="padding:0px 0px 10px 0px;font-size:16px;line-height:22px;color:#444">Button not working? Paste this URL into your browser:<br/><a href="${url}" style="color:#346df1">${url}</a></td></tr><tr><td align="center" style="padding:0px 20px 10px 20px;font-size:14px;line-height:22px;color:#444">If you did not request this email you can safely ignore it.</td></tr></table></body>`,
+        text: `Sign in to ${host}\n${url}\n\n`,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Resend error: ${JSON.stringify(await res.json())}`);
+    }
   },
 });
